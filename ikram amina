@@ -1,0 +1,107 @@
+import os
+import json
+from datetime import datetime
+
+# -------------------------------
+# 🩸 بيانات تجريبية (Mock Data)
+# يمكن استبدالها لاحقًا بالبيانات من الجهاز
+# -------------------------------
+sample_data = {
+    "WBC": 12.5,        # k/µL
+    "NEUT%": 75,        # %
+    "LYMPH%": 20,       # %
+    "MONO%": 3,         # %
+    "EOS%": 2,          # %
+    "RBC": 4.1,         # M/µL
+    "HGB": 10.8,        # g/dL
+    "HCT": 32.0,        # %
+    "MCV": 78,          # fL
+    "MCH": 26,          # pg
+    "MCHC": 33,         # g/dL
+    "PLT": 420,         # k/µL
+    "FBS": 110          # mg/dL
+}
+
+# -------------------------------
+# 📂 مجلد حفظ التحاليل السابقة
+# -------------------------------
+save_dir = "FNS_results"
+os.makedirs(save_dir, exist_ok=True)
+
+# -------------------------------
+# 🧠 تحليل CBC/FNS + التشخيص التقريبي
+# -------------------------------
+def analyze_fns(data):
+    report = []
+
+    # WBC
+    if data["WBC"] > 11:
+        report.append("Leukocytosis (high WBC) - suggestive of infection or inflammation.")
+        if data["NEUT%"] > 70:
+            report.append("Neutrophilia - likely bacterial infection. Recommend CRP, Procalcitonin.")
+        elif data["LYMPH%"] > 40:
+            report.append("Lymphocytosis - could be viral infection.")
+
+    elif data["WBC"] < 4:
+        report.append("Leukopenia (low WBC) - possible viral infection or bone marrow issue.")
+
+    # RBC / Anemia
+    if data["HGB"] < 12:
+        if data["MCV"] < 80:
+            report.append("Microcytic anemia - likely iron deficiency. Recommend Ferritin, Serum Iron.")
+        elif data["MCV"] > 100:
+            report.append("Macrocytic anemia - possible B12 or folate deficiency. Recommend Vitamin B12, Folate.")
+        else:
+            report.append("Normocytic anemia - could be chronic disease or acute blood loss.")
+
+    # Platelets
+    if data["PLT"] < 150:
+        report.append("Thrombocytopenia - risk of bleeding. Consider bone marrow assessment.")
+    elif data["PLT"] > 400:
+        report.append("Thrombocytosis - possible inflammation or myeloproliferative disorder.")
+
+    # FBS
+    if data["FBS"] > 126:
+        report.append("High fasting blood sugar - suggestive of diabetes. Recommend HbA1c, OGTT.")
+    elif data["FBS"] < 70:
+        report.append("Low fasting blood sugar - risk of hypoglycemia.")
+
+    return report
+
+# -------------------------------
+# 📝 حفظ التحاليل السابقة
+# -------------------------------
+def save_results(data, report):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = os.path.join(save_dir, f"FNS_{timestamp}.json")
+    to_save = {"data": data, "report": report, "timestamp": timestamp}
+    with open(filename, "w") as f:
+        json.dump(to_save, f, indent=4)
+    return filename
+
+# -------------------------------
+# 🖨️ طباعة التقرير
+# -------------------------------
+def print_report(data, report):
+    print("=== FNS Test Result ===")
+    for key, value in data.items():
+        print(f"{key}: {value}")
+    print("\n--- Interpretation / Recommendations ---")
+    for line in report:
+        print(f"- {line}")
+    print("="*40)
+
+# -------------------------------
+# 🔁 البرنامج الرئيسي
+# -------------------------------
+def main():
+    # مستقبلا هذا الجزء سيقرأ من الجهاز عبر COM/USB
+    data = sample_data  # الآن بيانات تجريبية
+
+    report = analyze_fns(data)
+    print_report(data, report)
+    saved_file = save_results(data, report)
+    print(f"\nResults saved in: {saved_file}")
+
+if __name__ == "__main__":
+    main()
