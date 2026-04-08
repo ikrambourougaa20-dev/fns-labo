@@ -1,190 +1,184 @@
 import streamlit as st
-import os
-import json
+import os, json
 from datetime import datetime
-import serial
-import serial.tools.list_ports
 
 # -------------------------------
-# إعداد الحفظ
+# إعداد
 # -------------------------------
 save_dir = os.path.join(os.path.expanduser("~"), "Desktop", "FNS_results")
 os.makedirs(save_dir, exist_ok=True)
 
 # -------------------------------
-# اللغات
+# لغة
 # -------------------------------
-lang = st.selectbox("Language / اللغة / Langue", ["English", "العربية", "Français"])
+lang = st.selectbox("Language", ["English", "العربية", "Français"])
 
 def tr(en, ar, fr):
-    if lang == "العربية":
-        return ar
-    elif lang == "Français":
-        return fr
+    if lang=="العربية": return ar
+    if lang=="Français": return fr
     return en
 
 # -------------------------------
-# الاتصال بالجهاز
+# القيم الطبيعية
 # -------------------------------
-def auto_connect():
-    ports = serial.tools.list_ports.comports()
-    for port in ports:
-        try:
-            ser = serial.Serial(port.device, 9600, timeout=2)
-            return ser
-        except:
+ranges = {
+    "WBC": (4,11),
+    "HGB": (12,16),
+    "PLT": (150,400),
+    "MCV": (80,100),
+    "FBS": (70,126)
+}
+
+# -------------------------------
+# Validation
+# -------------------------------
+def validate(data):
+    warnings = []
+    for k,v in data.items():
+        if v is None:
             continue
-    return None
-
-def read_device():
-    ser = auto_connect()
-    if ser:
-        try:
-            raw = ser.read(2048).decode(errors="ignore")
-            ser.close()
-
-            data = {}
-            for line in raw.split("\n"):
-                if ":" in line:
-                    k, v = line.split(":")
-                    try:
-                        data[k.strip()] = float(v.strip())
-                    except:
-                        pass
-            return data
-        except:
-            return None
-    return None
+        if v < 0:
+            warnings.append(f"{k} invalid")
+    return warnings
 
 # -------------------------------
-# التحليل
+# Consistency
+# -------------------------------
+def consistency(data):
+    alerts = []
+    HGB = data.get("HGB")
+    HCT = data.get("HCT")
+
+    if HGB and HCT:
+        if abs(HCT - 3*HGB) > 5:
+            alerts.append("HCT not consistent with HGB")
+
+    return alerts
+
+# -------------------------------
+# Auto calculation
+# -------------------------------
+def auto_calc(data):
+    NEUT = data.get("NEUT")
+    LYM = data.get("LYM")
+    MONO = data.get("MONO")
+
+    if NEUT and LYM and not MONO:
+        data["MONO"] = 100 - (NEUT + LYM)
+
+    return data
+
+# -------------------------------
+# Normalization
+# -------------------------------
+def normalize(data):
+    mapping = {
+        "NEUT%":"NEUT",
+        "LYMPH%":"LYM"
+    }
+    new_data = {}
+    for k,v in data.items():
+        new_key = mapping.get(k,k)
+        new_data[new_key]=v
+    return new_data
+
+# -------------------------------
+# تحليل
 # -------------------------------
 def analyze(data):
     report = []
+    alerts = []
 
-    WBC = data.get("WBC",0)
-    NEUT = data.get("NEUT",0)
-    LYM = data.get("LYM",0)
-    MONO = data.get("MONO",0)
-    EOS = data.get("EOS",0)
-    BASO = data.get("BASO",0)
-
-    RBC = data.get("RBC",0)
-    HGB = data.get("HGB",0)
-    HCT = data.get("HCT",0)
-    MCV = data.get("MCV",0)
-    MCH = data.get("MCH",0)
-    MCHC = data.get("MCHC",0)
-
-    PLT = data.get("PLT",0)
-    FBS = data.get("FBS",0)
+    WBC = data.get("WBC")
+    NEUT = data.get("NEUT")
+    LYM = data.get("LYM")
+    HGB = data.get("HGB")
+    MCV = data.get("MCV")
+    PLT = data.get("PLT")
+    FBS = data.get("FBS")
 
     # WBC
-    if WBC > 11:
-        report.append(tr("High WBC","ارتفاع WBC","WBC élevé"))
-        if NEUT > 70:
-            report.append(tr("Bacterial infection","عدوى بكتيرية","Infection bactérienne"))
-        elif LYM > 40:
-            report.append(tr("Viral infection","عدوى فيروسية","Infection virale"))
-    elif WBC < 4:
-        report.append(tr("Low WBC","انخفاض WBC","WBC faible"))
+    if WBC:
+        if WBC > 11:
+            if NEUT and NEUT > 70:
+                report.append("Bacterial infection suspected")
+            elif LYM and LYM > 40:
+                report.append("Viral infection suspected")
 
-    # Differential
-    if MONO > 10:
-        report.append(tr("High Monocytes","ارتفاع MONO","Monocytes élevés"))
-    if EOS > 6:
-        report.append(tr("Possible allergy/parasite","حساسية أو طفيليات","Allergie ou parasite"))
-    if BASO > 2:
-        report.append(tr("High Basophils","ارتفاع BASO","Basophiles élevés"))
-
-    # RBC / Anemia
-    if HGB < 12:
-        if MCV < 80:
-            report.append(tr("Iron deficiency anemia","أنيميا نقص الحديد","Anémie ferriprive"))
-        elif MCV > 100:
-            report.append(tr("B12/Folate deficiency anemia","أنيميا نقص B12","Anémie carence B12"))
-        else:
-            report.append(tr("Normocytic anemia","أنيميا عادية","Anémie normocytaire"))
+    # Anemia
+    if HGB and HGB < 12:
+        if MCV and MCV < 80:
+            report.append("Iron deficiency anemia")
+        elif MCV and MCV > 100:
+            report.append("B12 deficiency anemia")
 
     # Platelets
-    if PLT < 150:
-        report.append(tr("Low platelets","نقص الصفائح","Thrombopénie"))
-    elif PLT > 400:
-        report.append(tr("High platelets","ارتفاع الصفائح","Thrombocytose"))
+    if PLT:
+        if PLT < 150:
+            alerts.append("Risk of bleeding")
+        elif PLT > 400:
+            report.append("Possible inflammation")
 
     # Sugar
-    if FBS > 126:
-        report.append(tr("Hyperglycemia","ارتفاع السكر","Hyperglycémie"))
-    elif FBS < 70:
-        report.append(tr("Hypoglycemia","انخفاض السكر","Hypoglycémie"))
+    if FBS:
+        if FBS > 126:
+            alerts.append("Hyperglycemia")
+        elif FBS < 70:
+            alerts.append("Hypoglycemia")
 
-    return report
-
-# -------------------------------
-# الحفظ
-# -------------------------------
-def save(name, pid, data, report):
-    file = os.path.join(save_dir, f"{pid}.json")
-    with open(file, "w", encoding="utf-8") as f:
-        json.dump({"name":name,"id":pid,"data":data,"report":report}, f, indent=4, ensure_ascii=False)
-    return file
+    return report, alerts
 
 # -------------------------------
-# الواجهة
+# واجهة
 # -------------------------------
-st.title(tr("FNS Analyzer","محلل FNS","Analyseur FNS"))
+st.title("FNS Analyzer")
 
-name = st.text_input(tr("Patient Name","اسم المريض","Nom du patient"))
-pid = st.text_input(tr("Patient ID","رقم المريض","ID patient"))
+pid = st.text_input("Patient ID")
 
-mode = st.radio("Mode", ["Device", "Manual"])
+WBC = st.number_input("WBC", value=None)
+NEUT = st.number_input("NEUT%", value=None)
+LYM = st.number_input("LYM%", value=None)
+HGB = st.number_input("HGB", value=None)
+HCT = st.number_input("HCT", value=None)
+MCV = st.number_input("MCV", value=None)
+PLT = st.number_input("PLT", value=None)
+FBS = st.number_input("FBS", value=None)
 
-# -------------------------------
-# إدخال يدوي كامل
-# -------------------------------
-if mode == "Manual":
-    WBC = st.number_input("WBC")
-    NEUT = st.number_input("NEUT%")
-    LYM = st.number_input("LYM%")
-    MONO = st.number_input("MONO%")
-    EOS = st.number_input("EOS%")
-    BASO = st.number_input("BASO%")
-
-    RBC = st.number_input("RBC")
-    HGB = st.number_input("HGB")
-    HCT = st.number_input("HCT")
-    MCV = st.number_input("MCV")
-    MCH = st.number_input("MCH")
-    MCHC = st.number_input("MCHC")
-
-    PLT = st.number_input("PLT")
-    FBS = st.number_input("FBS")
-
-# -------------------------------
-# زر التحليل
-# -------------------------------
 if st.button("Analyze"):
 
-    if not pid:
-        st.warning("Enter patient ID")
-    else:
-        if mode == "Device":
-            data = read_device()
-            if not data:
-                st.warning("Device not detected, switch to manual")
-                data = {}
-        else:
-            data = {
-                "WBC":WBC,"NEUT":NEUT,"LYM":LYM,"MONO":MONO,"EOS":EOS,"BASO":BASO,
-                "RBC":RBC,"HGB":HGB,"HCT":HCT,"MCV":MCV,"MCH":MCH,"MCHC":MCHC,
-                "PLT":PLT,"FBS":FBS
-            }
+    data = {
+        "WBC":WBC,"NEUT":NEUT,"LYM":LYM,
+        "HGB":HGB,"HCT":HCT,"MCV":MCV,
+        "PLT":PLT,"FBS":FBS
+    }
 
-        report = analyze(data)
+    data = normalize(data)
+    data = auto_calc(data)
 
-        st.write(data)
-        for r in report:
-            st.write("- "+r)
+    val_warn = validate(data)
+    cons_warn = consistency(data)
 
-        save(name, pid, data, report)
-        st.success("Saved")
+    report, alerts = analyze(data)
+
+    st.subheader("Results")
+    st.write(data)
+
+    # عرض Low / High
+    for k,v in data.items():
+        if k in ranges and v:
+            low,high = ranges[k]
+            if v < low:
+                st.error(f"{k} LOW")
+            elif v > high:
+                st.warning(f"{k} HIGH")
+
+    st.subheader("Interpretation")
+    for r in report:
+        st.write("- "+r)
+
+    st.subheader("Alerts")
+    for a in alerts:
+        st.error(a)
+
+    for w in val_warn + cons_warn:
+        st.warning(w)
